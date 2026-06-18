@@ -7,98 +7,76 @@
     <meta name="description" content="AI-powered SEC filing analysis: extract metrics, assess management tone, classify risks, and benchmark competitors from 10-K/10-Q filings." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
+    <!-- Hidden form to maintain existing file upload handler -->
+    <form id="uploadForm" class="upload-section" style="display: none;">
+      <input id="documents" name="documents" type="file" multiple accept=".pdf,.txt,.md,.html,.htm,.csv" />
+    </form>
+
     <div class="app-shell" id="appShell">
+      
+      <!-- Zone 1: Topbar (48px fixed height) -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <svg class="logo-icon-svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7c6aff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+            <path d="M2 17l10 5 10-5"></path>
+            <path d="M2 12l10 5 10-5"></path>
+          </svg>
+          <span class="logo-text">FinSight AI</span>
+          <span class="chevron">›</span>
+          <span class="active-file" id="activeFile">No filing selected</span>
+        </div>
+        
+        <div class="topbar-right">
+          <div class="status-chip" id="statusBox">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="status">Ready</span>
+          </div>
+          
+          <button type="button" class="btn btn-ghost" id="addFilingBtn">
+            ＋ Add filing
+          </button>
+          
+          <button type="button" class="btn btn-primary" id="analyzeBtn">
+            Analyze
+          </button>
+        </div>
+      </header>
+      
+      <!-- Zone 2: Tab Strip (36px fixed height) -->
+      <nav class="tab-strip nav-tabs" aria-label="Result sections">
+        <button class="nav-tab active" data-tab="summary" id="tab-summary">Summary</button>
+        <button class="nav-tab" data-tab="metrics" id="tab-metrics">Metrics</button>
+        <button class="nav-tab" data-tab="tone" id="tab-tone">Tone</button>
+        <button class="nav-tab" data-tab="risks" id="tab-risks">Risks</button>
+        <button class="nav-tab" data-tab="benchmark" id="tab-benchmark">Benchmark</button>
+        <button class="nav-tab" data-tab="memo" id="tab-memo">Memo</button>
+      </nav>
 
-      <!-- Sidebar -->
-      <aside class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-          <div class="logo">
-            <div class="logo-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <rect x="3" y="13" width="4" height="8" rx="1" fill="currentColor" opacity="0.5"/>
-                <rect x="10" y="9" width="4" height="12" rx="1" fill="currentColor" opacity="0.75"/>
-                <rect x="17" y="4" width="4" height="17" rx="1" fill="currentColor"/>
-              </svg>
-            </div>
-            <div>
-              <span class="logo-label">FinSight AI</span>
-              <span class="logo-sub">Document Analyst</span>
+      <!-- Loading animation -->
+      <div class="loading-bar" id="loadingBar"></div>
+
+      <!-- Zone 3: Content Area -->
+      <main class="content-area main-content" id="mainContent">
+        <!-- Global Empty State -->
+        <div class="empty-placeholder" id="globalEmptyState">
+          <div class="empty-card">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            <div class="empty-heading">Upload a filing to begin</div>
+            <div class="empty-subtext">Drop a 10-K, 10-Q, or earnings transcript to extract financial metrics, assess tone, and generate an investment memo.</div>
+            <div class="feature-hints">
+              <div class="hint-row"><div class="hint-dot teal"></div>Extract financial metrics from filings</div>
+              <div class="hint-row"><div class="hint-dot amber"></div>Assess management tone and sentiment</div>
+              <div class="hint-row"><div class="hint-dot red"></div>Identify risks and generate memos</div>
             </div>
           </div>
         </div>
 
-        <form id="uploadForm" class="upload-section">
-          <label class="dropzone" for="documents" id="dropzoneLabel">
-            <input id="documents" name="documents" type="file" multiple accept=".pdf,.txt,.md,.html,.htm,.csv" />
-            <div class="dropzone-icon">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-              </svg>
-            </div>
-            <span class="drop-title">Drop files here or click to browse</span>
-            <span id="fileList" class="drop-subtitle">PDF, HTML, TXT, MD, or CSV</span>
-          </label>
-
-          <div class="button-row">
-            <button type="submit" class="btn btn-primary" id="analyzeBtn">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-              Analyze Uploads
-            </button>
-            <button type="button" class="btn btn-ghost" id="sampleButton">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-              Sample 10-K
-            </button>
-          </div>
-        </form>
-
-        <div class="status-box" id="statusBox">
-          <div class="status-indicator" id="statusDot"></div>
-          <span id="status">Ready</span>
-        </div>
-
-        <!-- Loading animation -->
-        <div class="loading-bar" id="loadingBar"></div>
-
-        <nav class="nav-tabs" aria-label="Result sections">
-          <button class="nav-tab active" data-tab="summary" id="tab-summary">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-            Summary
-          </button>
-          <button class="nav-tab" data-tab="metrics" id="tab-metrics">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
-            Metrics
-          </button>
-          <button class="nav-tab" data-tab="tone" id="tab-tone">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-            Tone
-          </button>
-          <button class="nav-tab" data-tab="risks" id="tab-risks">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-            Risks
-          </button>
-          <button class="nav-tab" data-tab="benchmark" id="tab-benchmark">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            Benchmark
-          </button>
-          <button class="nav-tab" data-tab="memo" id="tab-memo">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-            Memo
-          </button>
-        </nav>
-
-        <div class="sidebar-footer">
-          <span class="footer-badge">AI-Powered Analysis</span>
-        </div>
-      </aside>
-
-      <!-- Main content -->
-      <main class="main-content" id="mainContent">
         <div id="summary" class="view active"></div>
         <div id="metrics" class="view"></div>
         <div id="tone" class="view"></div>
@@ -106,20 +84,6 @@
         <div id="benchmark" class="view"></div>
         <div id="memo" class="view"></div>
 
-        <!-- Empty state -->
-        <div class="empty-state" id="emptyState">
-          <div class="empty-icon">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <line x1="16" y1="13" x2="8" y2="13"/>
-              <line x1="16" y1="17" x2="8" y2="17"/>
-              <polyline points="10 9 9 9 8 9"/>
-            </svg>
-          </div>
-          <h2>Upload a filing to begin analysis</h2>
-          <p>Drop a 10-K, 10-Q, or earnings transcript to extract financial metrics, assess management tone, classify risks, and generate an investment memo.</p>
-        </div>
       </main>
     </div>
     <script src="/static/app.js"></script>

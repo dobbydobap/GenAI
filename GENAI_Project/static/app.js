@@ -7,29 +7,26 @@ const statusDot = document.querySelector("#statusDot");
 const loadingBar = document.querySelector("#loadingBar");
 const form = document.querySelector("#uploadForm");
 const input = document.querySelector("#documents");
-const fileList = document.querySelector("#fileList");
-const sampleButton = document.querySelector("#sampleButton");
-const emptyState = document.querySelector("#emptyState");
-const dropzoneLabel = document.querySelector("#dropzoneLabel");
+const activeFileEl = document.querySelector("#activeFile");
+const addFilingBtn = document.querySelector("#addFilingBtn");
 
-/* ===== Drag & Drop ===== */
-dropzoneLabel.addEventListener("dragover", (e) => {
-  e.preventDefault();
-  dropzoneLabel.classList.add("drag-over");
-});
-dropzoneLabel.addEventListener("dragleave", () => dropzoneLabel.classList.remove("drag-over"));
-dropzoneLabel.addEventListener("drop", (e) => {
-  e.preventDefault();
-  dropzoneLabel.classList.remove("drag-over");
-  if (e.dataTransfer.files.length) {
-    input.files = e.dataTransfer.files;
-    input.dispatchEvent(new Event("change"));
-  }
-});
+/* ===== Form Triggers ===== */
+if (addFilingBtn) {
+  addFilingBtn.addEventListener("click", () => {
+    input.click();
+  });
+}
 
 input.addEventListener("change", () => {
-  const names = [...input.files].map((f) => f.name);
-  fileList.textContent = names.length ? names.join(", ") : "PDF, HTML, TXT, MD, or CSV";
+  const files = [...input.files];
+  if (!files.length) {
+    if (activeFileEl) activeFileEl.textContent = "No filing selected";
+    return;
+  }
+  // Just show the first file name for the topbar, could expand logic if multiple
+  if (activeFileEl) activeFileEl.textContent = files[0].name + (files.length > 1 ? ` (+${files.length - 1})` : "");
+  // Automatically submit when files are selected
+  form.dispatchEvent(new Event("submit"));
 });
 
 /* ===== Tab Navigation ===== */
@@ -40,15 +37,20 @@ document.querySelectorAll(".nav-tab").forEach((btn) => {
     btn.classList.add("active");
     const target = document.querySelector(`#${btn.dataset.tab}`);
     if (target) target.classList.add("active");
-    emptyState.classList.add("hidden");
+    
+    // Hide empty state if present
+    const empty = document.querySelector(".empty-state");
+    if (empty) empty.classList.add("hidden");
   });
 });
 
 /* ===== Form Submission ===== */
+document.querySelector("#analyzeBtn").addEventListener("click", () => form.dispatchEvent(new Event("submit")));
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!input.files.length) {
-    setStatus("Choose at least one filing or transcript.", "error");
+    setStatus("Choose a filing first.", "error");
     return;
   }
   const data = new FormData(form);
@@ -72,10 +74,16 @@ async function runAnalysis(fetcher) {
     setStatus("Analysis complete", "ok");
     // Activate summary tab
     document.querySelectorAll(".nav-tab").forEach((t) => t.classList.remove("active"));
-    document.querySelector("#tab-summary").classList.add("active");
+    const tabSummary = document.querySelector("#tab-summary");
+    if (tabSummary) tabSummary.classList.add("active");
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-    document.querySelector("#summary").classList.add("active");
-    emptyState.classList.add("hidden");
+    const viewSummary = document.querySelector("#summary");
+    if (viewSummary) viewSummary.classList.add("active");
+    
+    // Remove global empty state
+    const emptyContainer = document.querySelector("#globalEmptyState");
+    if (emptyContainer) emptyContainer.remove();
+
   } catch (err) {
     setStatus(err.message, "error");
   } finally {
@@ -90,7 +98,9 @@ function setBusy(busy) {
 
 function setStatus(msg, type = "ok") {
   statusEl.textContent = msg;
-  statusDot.className = "status-indicator" + (type === "busy" ? " busy" : type === "error" ? " error" : "");
+  statusDot.className = "status-dot" + (type === "busy" ? " busy" : type === "error" ? " error" : " ok");
+  const banner = document.querySelector("#statusBox");
+  banner.className = "status-chip" + (type === "busy" ? " busy" : type === "error" ? " error" : " ok");
 }
 
 /* ===== Render ===== */
@@ -106,29 +116,43 @@ function render(result) {
 
 /* ===== Summary ===== */
 function renderSummary(result, doc) {
-  const mode = doc.analysis_mode === "openai" ? providerName(doc.genai) : "Rule-based";
+  const metrics = doc.metrics || [];
+  const byName = {};
+  metrics.forEach((m) => { if (!byName[m.name]) byName[m.name] = m; });
+
+  const toneLabel = doc.tone?.label || "N/A";
+  const risksCount = doc.risks?.length || 0;
+  
+  // Specific style logic requested by user
+  const isConfident = toneLabel.toLowerCase() === "confident";
+  const toneChipClass = isConfident ? "chip-success" : (toneLabel.toLowerCase() === "cautious" ? "chip-danger" : "chip-neutral");
+  const riskChipClass = risksCount > 0 ? "chip-warning" : "chip-neutral";
+
   document.querySelector("#summary").innerHTML = `
-    <h1 class="section-title">Analysis Summary</h1>
-    <div class="kpi-grid">
-      ${kpi("Company", doc.company, "accent")}
-      ${kpi("Metrics Found", doc.metrics.length, "sky")}
-      ${kpi("Risk Factors", doc.risks.length, "amber")}
-      ${kpi("Confidence", Math.round(doc.extraction.confidence * 100) + "%", "green")}
-      ${kpi("Analysis Mode", mode, "purple")}
-    </div>
-    <div class="card">
-      <div class="card-header"><h2>Document Profile</h2></div>
-      <table class="profile-table">
-        <tbody>
-          <tr><td>File</td><td>${esc(doc.filename)}</td></tr>
-          <tr><td>Extractor</td><td><span class="pill">${esc(doc.extraction.method)}</span></td></tr>
-          <tr><td>Characters</td><td>${fmtNum(doc.extraction.characters)}</td></tr>
-          <tr><td>Provider</td><td>${doc.genai?.provider ? esc(providerName(doc.genai)) : "Offline"}</td></tr>
-          <tr><td>Model</td><td>${doc.genai?.enabled ? esc(doc.genai.model || "Model") : "Not configured"}</td></tr>
-          <tr><td>Model Status</td><td>${esc(doc.genai?.error || (doc.genai?.data ? "Model analysis complete" : "Rule-based analysis"))}</td></tr>
-          <tr><td>Warnings</td><td>${doc.extraction.warnings.map(esc).join("<br>") || '<span style="color:var(--green)">None</span>'}</td></tr>
-        </tbody>
-      </table>
+    <div class="card-elevated">
+      <div class="profile-header">
+        <div class="profile-title-group">
+          <div class="profile-company-name">${esc(doc.company)}</div>
+          <div class="profile-filename">${esc(doc.filename)}</div>
+        </div>
+        <div class="profile-chips">
+          <span class="chip ${toneChipClass}">${esc(toneLabel.toUpperCase())}</span>
+          <span class="chip ${riskChipClass}">${risksCount} RISKS</span>
+        </div>
+      </div>
+      
+      <div class="profile-divider"></div>
+      
+      <div class="metrics-grid">
+        ${renderProfileMetric("Revenue", byName["Revenue"]?.value, "USD")}
+        ${renderProfileMetric("Net Income", byName["Net Income"]?.value, "USD")}
+        ${renderProfileMetric("Op. Income", byName["Operating Income"]?.value, "USD")}
+        ${renderProfileMetric("Cash Flow", byName["Cash Flow"]?.value, "USD")}
+        ${renderProfileMetric("Total Debt", byName["Debt"]?.value, "USD")}
+        ${renderProfileMetric("Total Assets", byName["Total Assets"]?.value, "USD")}
+        ${renderProfileMetric("CapEx", byName["Capex"]?.value, "USD")}
+        ${renderProfileMetric("Equity", byName["Shareholders Equity"]?.value, "USD")}
+      </div>
     </div>
   `;
 }
@@ -295,9 +319,14 @@ function renderBenchmark(result, doc) {
     // Single document — generate self-benchmark from metrics
     if (!doc) {
       document.querySelector("#benchmark").innerHTML = `
-        <h1 class="section-title">Competitor Benchmarking</h1>
-        <p class="section-subtitle">Upload multiple filings to compare companies side-by-side</p>
-        <div class="card"><p class="excerpt">Upload 2+ filings to enable cross-company benchmarking, or view the single-company profile below.</p></div>
+        <div class="page-header">
+          <div class="breadcrumb">FinSight AI <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg> Benchmarking</div>
+          <h1 class="page-title">Competitor Benchmarking</h1>
+        </div>
+        <div class="empty-placeholder">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+          <p>Upload 2+ filings to enable cross-company benchmarking.</p>
+        </div>
       `;
       return;
     }
@@ -307,28 +336,41 @@ function renderBenchmark(result, doc) {
     metrics.forEach((m) => { if (!byName[m.name]) byName[m.name] = m; });
 
     html += `
-      <h1 class="section-title">Company Profile &mdash; ${esc(doc.company)}</h1>
-      <p class="section-subtitle">Key financial metrics at a glance. Upload multiple filings to compare companies side-by-side.</p>
+      <div class="page-header">
+        <div class="breadcrumb">FinSight AI <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg> Profile</div>
+        <h1 class="page-title">Company Profile</h1>
+      </div>
 
-      <div class="benchmark-grid">
-        <div class="benchmark-company-card">
-          <div class="benchmark-company-name">${esc(doc.company)}</div>
-          <div class="benchmark-scale">${esc(doc.filename)}</div>
-          <div class="benchmark-metrics-grid">
-            ${bmMetric("Revenue", fmtVal(byName["Revenue"]?.value, "USD"))}
-            ${bmMetric("Net Income", fmtVal(byName["Net Income"]?.value, "USD"))}
-            ${bmMetric("Op. Income", fmtVal(byName["Operating Income"]?.value, "USD"))}
-            ${bmMetric("Cash Flow", fmtVal(byName["Cash Flow"]?.value, "USD"))}
-            ${bmMetric("Total Debt", fmtVal(byName["Debt"]?.value, "USD"))}
-            ${bmMetric("Total Assets", fmtVal(byName["Total Assets"]?.value, "USD"))}
-            ${bmMetric("Capex", fmtVal(byName["Capex"]?.value, "USD"))}
-            ${bmMetric("Equity", fmtVal(byName["Shareholders Equity"]?.value, "USD"))}
-          </div>
-          <div class="benchmark-footer">
-            <span class="pill">${esc(doc.tone?.label || "n/a")}</span>
-            <span class="pill">${doc.risks?.length || 0} risks</span>
-          </div>
+      <div class="card card-elevated">
+        <div class="profile-header">
+          <div class="profile-company-name">${esc(doc.company)}</div>
+          <div class="profile-filename">${esc(doc.filename)}</div>
         </div>
+        
+        <div class="metrics-table">
+          ${bmMetric("Revenue", fmtVal(byName["Revenue"]?.value, "USD"))}
+          ${bmMetric("Net Income", fmtVal(byName["Net Income"]?.value, "USD"))}
+          ${bmMetric("Op. Income", fmtVal(byName["Operating Income"]?.value, "USD"))}
+          ${bmMetric("Cash Flow", fmtVal(byName["Cash Flow"]?.value, "USD"))}
+          ${bmMetric("Total Debt", fmtVal(byName["Debt"]?.value, "USD"))}
+          ${bmMetric("Total Assets", fmtVal(byName["Total Assets"]?.value, "USD"))}
+          ${bmMetric("Capex", fmtVal(byName["Capex"]?.value, "USD"))}
+          ${bmMetric("Equity", fmtVal(byName["Shareholders Equity"]?.value, "USD"))}
+        </div>
+        
+        <div class="status-chips">
+          <span class="chip ${doc.tone?.label === 'confident' ? 'chip-success' : doc.tone?.label === 'cautious' ? 'chip-danger' : 'chip-neutral'}">${esc(doc.tone?.label || "N/A")}</span>
+          <span class="chip ${doc.risks?.length > 0 ? 'chip-warning' : 'chip-neutral'}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+            ${doc.risks?.length || 0} RISKS
+          </span>
+        </div>
+      </div>
+      
+      <div class="empty-placeholder">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        <p style="color:var(--text-primary);font-weight:500;margin-bottom:4px;">Ready to Compare</p>
+        <p>Upload multiple filings to benchmark competitors side-by-side.</p>
       </div>
     `;
   } else {
@@ -447,16 +489,38 @@ function renderMemo(doc) {
 }
 
 /* ===== Helpers ===== */
-function kpi(label, value, color = "") {
-  return `<div class="kpi-card"><span class="kpi-label">${esc(label)}</span><span class="kpi-value ${color}">${typeof value === "string" ? value : esc(String(value))}</span></div>`;
+function kpi(label, value, color) {
+  return `
+    <div class="kpi-card">
+      <div class="metric-label">${esc(label)}</div>
+      <div class="metric-value ${color}">${esc(value)}</div>
+    </div>
+  `;
+}
+
+function renderProfileMetric(label, value, unit) {
+  const formatted = fmtVal(value, unit);
+  const isNa = formatted.includes("n/a");
+  return `
+    <div class="metric-cell">
+      <div class="metric-cell-label">${esc(label)}</div>
+      <div class="metric-cell-value ${isNa ? 'muted-value' : ''}">${formatted}</div>
+    </div>
+  `;
 }
 
 function bmMetric(label, value) {
-  return `<div class="bm-metric"><span class="bm-metric-label">${esc(label)}</span><span class="bm-metric-value">${value}</span></div>`;
+  const isNa = value === "n/a" || String(value).includes("n/a");
+  return `
+    <div class="metrics-row">
+      <div class="metric-label">${esc(label)}</div>
+      <div class="metric-value ${isNa ? 'muted-value' : ''}">${value}</div>
+    </div>
+  `;
 }
 
 function fmtVal(value, unit) {
-  if (value === null || value === undefined) return '<span style="color:var(--text-muted)">n/a</span>';
+  if (value === null || value === undefined) return '<span class="muted-value">n/a</span>';
   if (unit === "%") return `${value.toFixed(1)}%`;
   const abs = Math.abs(value);
   const sign = value < 0 ? "-" : "";
@@ -468,16 +532,27 @@ function fmtVal(value, unit) {
 }
 
 function fmtPct(value) {
-  if (value === null || value === undefined) return '<span style="color:var(--text-muted)">n/a</span>';
-  const color = value >= 0 ? "var(--green)" : "var(--red)";
-  return `<span style="color:${color};font-weight:600">${value.toFixed(1)}%</span>`;
+  if (value === null || value === undefined) return '<span class="muted-value">n/a</span>';
+  const color = value >= 0 ? "var(--success)" : "var(--danger)";
+  return `<span style="color:${color};font-weight:500">${value.toFixed(1)}%</span>`;
 }
 
 function fmtNum(value) {
+  if (!value) return "0";
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
+function providerName(genai) {
+  if (!genai || !genai.provider) return "Unknown";
+  const p = genai.provider;
+  if (p === "openai") return "OpenAI";
+  if (p === "anthropic") return "Anthropic";
+  if (p === "gemini" || p === "google") return "Google Gemini";
+  return p.charAt(0).toUpperCase() + p.slice(1);
+}
+
 function esc(value) {
+  if (value === null || value === undefined) return "";
   return String(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -486,10 +561,5 @@ function esc(value) {
     .replaceAll("'", "&#039;");
 }
 
-function providerName(genai) {
-  if (!genai?.provider) return "Model";
-  return genai.provider === "gemini" ? "Gemini" : "OpenAI";
-}
-
-/* ===== Auto-load sample ===== */
-runAnalysis(() => fetch("/api/sample"));
+/* ===== No Auto-load ===== */
+// We removed the auto-load sample logic so the global empty state remains visible.
