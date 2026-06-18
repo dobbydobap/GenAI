@@ -1,0 +1,402 @@
+"""Rule-based financial metric extraction and comparison."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import asdict, dataclass
+from statistics import mean
+
+
+@dataclass(frozen=True)
+class Metric:
+    name: str
+    value: float
+    unit: str
+    raw_value: str
+    context: str
+    period: str | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# ---------- regex patterns for narrative / flowing text ----------
+# The capture group grabs the full numeric expression including optional $, commas, parens, and scale words.
+METRIC_PATTERNS = {
+    "Revenue": [
+        r"(?:total\s+)?(?:net\s+)?(?:sales|revenue|revenues)\s*(?:were?|was|of|totaled|:)?\s*(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)",
+        r"(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)\s+(?:in\s+)?(?:total\s+)?(?:net\s+)?(?:sales|revenue|revenues)",
+    ],
+    "EBITDA": [
+        r"ebitda\s*(?:was|of|:)?\s*(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)",
+    ],
+    "Operating Income": [
+        r"operating\s+(?:income|profit|earnings)\s*(?:was|of|:|\s+(?:increased|decreased|grew|declined)\s+to)?\s*(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)",
+    ],
+    "Operating Margin": [
+        r"operating\s+margin\D{0,50}(-?\d+(?:\.\d+)?\s?%)",
+    ],
+    "Gross Margin": [
+        r"gross\s+margin\D{0,50}(-?\d+(?:\.\d+)?\s?%)",
+    ],
+    "Gross Profit": [
+        r"gross\s+profit\s*(?:was|of|:)?\s*(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)",
+    ],
+    "Cash Flow": [
+        r"(?:operating\s+cash\s+flow|cash\s+(?:provided|generated)\s+by\s+operating\s+activities|net\s+cash\s+(?:provided|generated)\s+by\s+operating\s+activities)\s*(?:was|of|:|\s+totaled)?\s*(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)",
+    ],
+    "Debt": [
+        r"(?:total\s+)?(?:debt|borrowings|long-term\s+debt|long\s*-?term\s+obligations)\s*(?:was|of|:|\s+(?:was|totaled))?\s*(?:approximately\s+)?(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)",
+    ],
+    "Capex": [
+        r"(?:capital\s+expenditures?|capex|capital\s+spending|purchases?\s+of\s+property)\s*(?:was|were|of|:|\s+totaled)?\s*(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)",
+    ],
+    "Guidance": [
+        r"(?:expect|expects|guidance|outlook|forecast)\s*\S{0,40}?\s*(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand|%)?)",
+    ],
+    "Net Income": [
+        r"net\s+(?:earnings|income|loss)\s*(?:was|of|:|\s+(?:totaled|increased|decreased)\s+to)?\s*(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)",
+    ],
+    "Total Assets": [
+        r"total\s+assets\s*(?:were?|was|of|:)?\s*(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)",
+    ],
+    "Shareholders Equity": [
+        r"(?:total\s+)?(?:stockholders|shareholders|shareowners).?\s*equity\s*(?:was|of|:)?\s*(\$?\s*\(?-?[\d,]+(?:\.\d+)?\)?\s*(?:million|billion|thousand)?)",
+    ],
+}
+
+PERIOD_PATTERN = re.compile(r"(20\d{2}|19\d{2}|q[1-4]\s+20\d{2}|fiscal\s+20\d{2})", re.I)
+
+
+def extract_metrics(text: str) -> list[Metric]:
+    compact = re.sub(r"\s+", " ", text)
+    metrics: list[Metric] = _extract_statement_table_metrics(text)
+    seen: set[tuple[str, str, int]] = set()
+    for metric in metrics:
+        seen.add((metric.name, metric.raw_value, round(metric.value)))
+    for name, patterns in METRIC_PATTERNS.items():
+        for pattern in patterns:
+            for match in re.finditer(pattern, compact, re.I):
+                raw = match.group(1).strip()
+                if not _has_financial_marker(raw):
+                    continue
+                value, unit = parse_amount(raw)
+                if value is None:
+                    continue
+                context = _context(compact, match.start(), match.end())
+                key = (name, raw, round(value))
+                if key in seen:
+                    continue
+                seen.add(key)
+                period = _period_near(context)
+                metrics.append(Metric(name, value, unit, raw, context, period))
+                if len([m for m in metrics if m.name == name]) >= 6:
+                    break
+    return _deduplicate_metrics(
+        sorted(metrics, key=lambda m: (m.name, -(abs(m.value) if m.value else 0)))
+    )
+
+
+# ---------- table-based extraction for financial statement line items ----------
+
+TABLE_LABELS = {
+    # Revenue variants
+    "Net sales": "Revenue",
+    "Net revenues": "Revenue",
+    "Total revenues": "Revenue",
+    "Total net revenues": "Revenue",
+    "Revenue": "Revenue",
+    "Revenues": "Revenue",
+    "Net revenue": "Revenue",
+    "Total net sales": "Revenue",
+    "Sales": "Revenue",
+    # Debt
+    "Total debt, net": "Debt",
+    "Total debt": "Debt",
+    "Long-term debt": "Debt",
+    "Total long-term debt": "Debt",
+    # Cash flow
+    "Net cash provided by operating activities": "Cash Flow",
+    "Net cash generated by operating activities": "Cash Flow",
+    "Cash provided by operating activities": "Cash Flow",
+    "Net cash from operating activities": "Cash Flow",
+    "Cash flows from operating activities": "Cash Flow",
+    # Capex
+    "Capital expenditures": "Capex",
+    "Purchases of property, plant and equipment": "Capex",
+    "Purchases of property and equipment": "Capex",
+    "Capital spending": "Capex",
+    # Net income
+    "Net earnings": "Net Income",
+    "Net income": "Net Income",
+    "Net income (loss)": "Net Income",
+    "Net earnings (loss)": "Net Income",
+    "Net earnings from continuing operations": "Net Income",
+    "Net income attributable to": "Net Income",
+    # Operating
+    "Operating profit": "Operating Income",
+    "Operating income": "Operating Income",
+    "Operating income (loss)": "Operating Income",
+    "Income from operations": "Operating Income",
+    # Gross profit
+    "Gross profit": "Gross Profit",
+    # Total assets
+    "Total assets": "Total Assets",
+    # Equity
+    "Total stockholders' equity": "Shareholders Equity",
+    "Total shareholders' equity": "Shareholders Equity",
+    "Total shareowners' equity": "Shareholders Equity",
+    "Total equity": "Shareholders Equity",
+}
+
+
+def _extract_statement_table_metrics(text: str) -> list[Metric]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    metrics: list[Metric] = []
+    seen_names: set[str] = set()
+    for index, line in enumerate(lines):
+        normalized = re.sub(r"\s+", " ", line).strip()
+        normalized_lower = normalized.lower()
+
+        # Try exact match first, then substring/startswith match
+        matched_metric_name = None
+        for label, metric_name in TABLE_LABELS.items():
+            label_lower = label.lower()
+            if normalized_lower == label_lower:
+                matched_metric_name = metric_name
+                break
+            # startswith match but not too long (prevents false matches on "Revenue recognition policy...")
+            if normalized_lower.startswith(label_lower) and len(normalized_lower) < len(label_lower) + 30:
+                matched_metric_name = metric_name
+                break
+
+        if not matched_metric_name:
+            continue
+
+        # Skip if we already found this metric (take first/most prominent)
+        if matched_metric_name in seen_names:
+            continue
+
+        # Look for numeric values on the same line
+        # Match $-prefixed numbers and plain numbers, including parenthetical negatives
+        inline_numbers = re.findall(r"\$?\s*\(?\s*-?\s*[\d,]+(?:\.\d+)?\s*\)?", normalized)
+        # Filter to actual financial numbers (at least 3 meaningful digits)
+        inline_numbers = [n for n in inline_numbers if re.search(r"\d{2,}", n.replace(",", ""))]
+
+        values = []
+        if inline_numbers:
+            # Numbers on the same line as the label
+            for num_str in inline_numbers:
+                raw = num_str.strip()
+                value, unit = parse_amount(raw)
+                if value is not None:
+                    values.append((raw, value, unit))
+        else:
+            # Look for numbers on subsequent lines
+            cursor = index + 1
+            while cursor < min(len(lines), index + 10) and len(values) < 5:
+                candidate = lines[cursor].strip()
+                if candidate in ("$", "\u2014", "-", "\u2013", ""):
+                    cursor += 1
+                    continue
+                if re.fullmatch(r"\$?\s*\(?\s*-?\s*[\d,]+(?:\.\d+)?\s*\)?", candidate):
+                    raw = candidate
+                    value, unit = parse_amount(raw)
+                    if value is not None:
+                        values.append((raw, value, unit))
+                elif values:
+                    break
+                cursor += 1
+
+        if values:
+            raw, value, unit = values[0]
+            context_end = min(len(lines), index + 6)
+            context = "\n".join(lines[index : context_end])
+            # Most 10-K selected financial data tables are in millions.
+            if unit == "USD" and abs(value) < 1_000_000:
+                value *= 1_000_000
+                unit = "USD"
+            metrics.append(Metric(matched_metric_name, value, unit, raw, context, None))
+            seen_names.add(matched_metric_name)
+    return metrics
+
+
+# ---------- helpers ----------
+
+def parse_amount(raw: str) -> tuple[float | None, str]:
+    cleaned = raw.replace("$", "").replace(",", "").strip()
+    negative = ("(" in cleaned and ")" in cleaned) or cleaned.startswith("-")
+    cleaned = cleaned.strip("()").strip()
+    number_match = re.search(r"-?\d+(?:\.\d+)?", cleaned)
+    if not number_match:
+        return None, ""
+    number = float(number_match.group())
+    if negative and number > 0:
+        number *= -1
+    lower = raw.lower()
+    if "%" in raw:
+        return number, "%"
+    if "billion" in lower:
+        return number * 1_000_000_000, "USD"
+    if "million" in lower:
+        return number * 1_000_000, "USD"
+    if "thousand" in lower:
+        return number * 1_000, "USD"
+    return number, "USD"
+
+
+def _has_financial_marker(raw: str) -> bool:
+    lower = raw.lower()
+    # Explicit financial markers
+    if "$" in raw or "%" in raw or any(term in lower for term in ("million", "billion", "thousand")):
+        return True
+    # Plain numbers with enough digits to be plausible financial figures
+    digits_only = re.sub(r"[^\d]", "", raw)
+    return len(digits_only) >= 4
+
+
+def _deduplicate_metrics(metrics: list[Metric]) -> list[Metric]:
+    """Keep at most 3 values per metric name, preferring the highest-value (most prominent)."""
+    result: list[Metric] = []
+    counts: dict[str, int] = {}
+    for m in metrics:
+        counts.setdefault(m.name, 0)
+        if counts[m.name] < 3:
+            result.append(m)
+            counts[m.name] += 1
+    return result
+
+
+def compare_metrics(primary: list[Metric], prior: list[Metric] | None = None) -> list[dict]:
+    prior = prior or []
+    rows: list[dict] = []
+    names = sorted({m.name for m in primary} | {m.name for m in prior})
+    for name in names:
+        current_values = [m.value for m in primary if m.name == name]
+        prior_values = [m.value for m in prior if m.name == name]
+        current = current_values[0] if current_values else None
+        previous = prior_values[0] if prior_values else None
+        change = None
+        if current is not None and previous not in (None, 0):
+            change = (current - previous) / abs(previous) * 100
+        rows.append(
+            {
+                "metric": name,
+                "current": current,
+                "prior": previous,
+                "change_pct": change,
+                "current_raw": next((m.raw_value for m in primary if m.name == name), ""),
+                "prior_raw": next((m.raw_value for m in prior if m.name == name), ""),
+            }
+        )
+    return rows
+
+
+# ---------- enhanced benchmarking ----------
+
+def benchmark(documents: list[dict]) -> list[dict]:
+    """Generate a comprehensive comparative benchmark across multiple filings."""
+    rows: list[dict] = []
+    for document in documents:
+        metrics = document.get("metrics", [])
+        by_name: dict[str, list[float]] = {}
+        for metric in metrics:
+            by_name.setdefault(metric["name"], []).append(metric["value"])
+
+        revenue = _first(by_name, "Revenue")
+        net_income = _first(by_name, "Net Income")
+        operating_income = _first(by_name, "Operating Income")
+        cash_flow = _first(by_name, "Cash Flow")
+        debt = _first(by_name, "Debt")
+        capex = _first(by_name, "Capex")
+        total_assets = _first(by_name, "Total Assets")
+        gross_profit = _first(by_name, "Gross Profit")
+        equity = _first(by_name, "Shareholders Equity")
+
+        rows.append(
+            {
+                "company": document.get("company") or document.get("filename", "Unknown"),
+                # Core financial metrics
+                "revenue": revenue,
+                "net_income": net_income,
+                "operating_income": operating_income,
+                "cash_flow": cash_flow,
+                "debt": debt,
+                "total_assets": total_assets,
+                # Margin profiles (%)
+                "gross_margin": _ratio(gross_profit, revenue),
+                "operating_margin": _ratio(operating_income, revenue),
+                "net_income_margin": _ratio(net_income, revenue),
+                "cash_flow_margin": _ratio(cash_flow, revenue),
+                # Leverage & efficiency
+                "debt_to_equity": _ratio(debt, equity),
+                "debt_to_revenue": _ratio(debt, revenue),
+                "return_on_assets": _ratio(net_income, total_assets),
+                # Capital allocation
+                "capex_intensity": _ratio(abs(capex) if capex else None, revenue),
+                "capital_allocation": _capital_allocation(by_name),
+                # Revenue scale bucket
+                "revenue_scale": _revenue_scale(revenue),
+                # Growth proxy
+                "growth_proxy": _growth_proxy(by_name.get("Revenue", [])),
+                # Tone
+                "tone_label": document.get("tone", {}).get("label", "n/a"),
+                "tone_score": document.get("tone", {}).get("score"),
+                "risk_count": len(document.get("risks", [])),
+            }
+        )
+    return rows
+
+
+def _first(mapping: dict[str, list[float]], key: str) -> float | None:
+    values = mapping.get(key) or []
+    return values[0] if values else None
+
+
+def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator in (None, 0):
+        return None
+    return numerator / denominator * 100
+
+
+def _growth_proxy(values: list[float]) -> float | None:
+    if len(values) < 2 or values[1] == 0:
+        return None
+    return (values[0] - mean(values[1:])) / abs(mean(values[1:])) * 100
+
+
+def _capital_allocation(mapping: dict[str, list[float]]) -> str:
+    capex = _first(mapping, "Capex")
+    cash_flow = _first(mapping, "Cash Flow")
+    debt = _first(mapping, "Debt")
+    if capex and cash_flow and abs(capex) / max(abs(cash_flow), 1) > 0.45:
+        return "Reinvestment-heavy"
+    if debt and cash_flow and debt / max(abs(cash_flow), 1) > 4:
+        return "Leverage-sensitive"
+    if cash_flow and cash_flow > 0:
+        return "Cash-generative"
+    return "Balanced"
+
+
+def _revenue_scale(revenue: float | None) -> str:
+    if revenue is None:
+        return "Unknown"
+    rev = abs(revenue)
+    if rev >= 100_000_000_000:
+        return "Mega-cap ($100B+)"
+    if rev >= 10_000_000_000:
+        return "Large-cap ($10B-100B)"
+    if rev >= 1_000_000_000:
+        return "Mid-cap ($1B-10B)"
+    if rev >= 100_000_000:
+        return "Small-cap ($100M-1B)"
+    return "Micro-cap (<$100M)"
+
+
+def _context(text: str, start: int, end: int, radius: int = 180) -> str:
+    return text[max(0, start - radius) : min(len(text), end + radius)].strip()
+
+
+def _period_near(context: str) -> str | None:
+    found = PERIOD_PATTERN.findall(context)
+    return found[-1] if found else None
