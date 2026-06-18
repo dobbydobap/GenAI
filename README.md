@@ -1,5 +1,7 @@
 # AI Financial Document Analyst
 
+**Live Demo:** [https://finai-vmvi.onrender.com/](https://finai-vmvi.onrender.com/)
+
 Production-grade, dependency-light financial filing analyst for Assignment 12. It ingests annual reports, 10-K/10-Q filings, and transcripts; extracts core metrics; compares periods; analyzes management tone; classifies risks; benchmarks multiple companies; and generates an investment memo.
 
 ## Run
