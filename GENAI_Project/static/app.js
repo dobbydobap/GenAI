@@ -144,14 +144,14 @@ function renderSummary(result, doc) {
       <div class="profile-divider"></div>
       
       <div class="metrics-grid">
-        ${renderProfileMetric("Revenue", byName["Revenue"]?.value, "USD")}
-        ${renderProfileMetric("Net Income", byName["Net Income"]?.value, "USD")}
-        ${renderProfileMetric("Op. Income", byName["Operating Income"]?.value, "USD")}
-        ${renderProfileMetric("Cash Flow", byName["Cash Flow"]?.value, "USD")}
-        ${renderProfileMetric("Total Debt", byName["Debt"]?.value, "USD")}
-        ${renderProfileMetric("Total Assets", byName["Total Assets"]?.value, "USD")}
-        ${renderProfileMetric("CapEx", byName["Capex"]?.value, "USD")}
-        ${renderProfileMetric("Equity", byName["Shareholders Equity"]?.value, "USD")}
+        ${renderTextMetric("Document Type", "SEC Filing")}
+        ${renderTextMetric("Extracted Metrics", metrics.length)}
+        ${renderTextMetric("Characters", fmtNum(doc.extraction?.characters))}
+        ${renderTextMetric("Confidence", Math.round((doc.extraction?.confidence || 0) * 100) + "%")}
+        ${renderTextMetric("Analysis Mode", doc.analysis_mode === "openai" ? "Model-backed" : "Rule-based")}
+        ${renderTextMetric("Provider", doc.genai?.provider ? providerName(doc.genai) : "Offline")}
+        ${renderTextMetric("Model", doc.genai?.enabled ? (doc.genai.model || "Model") : "None")}
+        ${renderTextMetric("Warnings", doc.extraction?.warnings?.length || "None")}
       </div>
     </div>
   `;
@@ -505,6 +505,17 @@ function renderProfileMetric(label, value, unit) {
     <div class="metric-cell">
       <div class="metric-cell-label">${esc(label)}</div>
       <div class="metric-cell-value ${isNa ? 'muted-value' : ''}">${formatted}</div>
+    </div>
+  `;
+}
+
+function renderTextMetric(label, value) {
+  const formatted = value === null || value === undefined || value === "N/A" || value === "" ? "n/a" : esc(String(value));
+  const isNa = formatted === "n/a";
+  return `
+    <div class="metric-cell">
+      <div class="metric-cell-label">${esc(label)}</div>
+      <div class="metric-cell-value ${isNa ? 'muted-value' : ''}" style="font-size:1.1rem; letter-spacing:0">${formatted}</div>
     </div>
   `;
 }
