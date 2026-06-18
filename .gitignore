@@ -3,5 +3,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
-data/uploads/*
-!data/uploads/.gitkeep
+**/data/uploads/*
+!**/data/uploads/.gitkeep
+.DS_Store
+**/.DS_Store
+*.docx
