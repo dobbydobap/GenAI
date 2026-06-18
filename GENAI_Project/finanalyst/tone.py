@@ -6,31 +6,32 @@ import re
 
 
 CONFIDENT = {
-    "strong",
+    "strong", "strongly",
     "confident",
     "record",
-    "improved",
-    "growth",
+    "improved", "improving",
+    "growth", "growing",
     "resilient",
     "favorable",
     "robust",
-    "accelerated",
+    "accelerated", "acceleration",
     "successful",
-    "opportunity",
-    "outperform",
+    "opportunity", "opportunities",
+    "outperform", "outperformed", "outperforming",
+    "strengthen", "strengthened",
 }
 CAUTIOUS = {
-    "uncertain",
+    "uncertain", "uncertainty",
     "cautious",
-    "risk",
-    "decline",
-    "pressure",
-    "headwind",
-    "volatile",
-    "weakness",
-    "challenge",
+    "risk", "risks",
+    "decline", "declined", "declining",
+    "pressure", "pressures",
+    "headwind", "headwinds",
+    "volatile", "volatility",
+    "weakness", "weaknesses",
+    "challenge", "challenges", "challenged",
     "adverse",
-    "disruption",
+    "disruption", "disruptions",
     "materially",
 }
 HEDGES = {
@@ -39,11 +40,11 @@ HEDGES = {
     "could",
     "possibly",
     "approximately",
-    "believe",
-    "expect",
-    "intend",
-    "anticipate",
-    "estimate",
+    "believe", "believes",
+    "expect", "expects", "expected",
+    "intend", "intends",
+    "anticipate", "anticipates", "anticipated",
+    "estimate", "estimates", "estimated",
     "subject",
 }
 
@@ -55,7 +56,7 @@ def analyze_tone(text: str, prior_text: str | None = None) -> dict:
     cautious = sum(1 for word in words if word in CAUTIOUS)
     hedges = sum(1 for word in words if word in HEDGES)
     score = (confident - cautious - hedges * 0.25) / total * 1000
-    label = "confident" if score > 0.55 else "cautious" if score < -0.55 else "balanced"
+    label = "confident" if score > 2.0 else "cautious" if score < -2.0 else "balanced"
     result = {
         "label": label,
         "score": round(score, 2),
@@ -68,9 +69,9 @@ def analyze_tone(text: str, prior_text: str | None = None) -> dict:
     if prior_text:
         prior = analyze_tone(prior_text)
         result["change_vs_prior"] = round(result["score"] - prior["score"], 2)
-        if result["score"] < prior["score"] - 0.75:
+        if result["score"] < prior["score"] - 3.0:
             result["tone_shift"] = "more cautious"
-        elif result["score"] > prior["score"] + 0.75:
+        elif result["score"] > prior["score"] + 3.0:
             result["tone_shift"] = "more confident"
         else:
             result["tone_shift"] = "stable"
@@ -82,8 +83,8 @@ def _flag_passages(text: str) -> list[dict]:
     scored = []
     for sentence in sentences:
         lower = sentence.lower()
-        cautious = sum(1 for term in CAUTIOUS if term in lower)
-        confident = sum(1 for term in CONFIDENT if term in lower)
+        cautious = sum(1 for term in CAUTIOUS if re.search(rf"\b{re.escape(term)}\b", lower))
+        confident = sum(1 for term in CONFIDENT if re.search(rf"\b{re.escape(term)}\b", lower))
         hedges = sum(1 for term in HEDGES if re.search(rf"\b{re.escape(term)}\b", lower))
         if cautious or confident or hedges >= 2:
             scored.append(
