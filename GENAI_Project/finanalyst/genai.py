@@ -135,12 +135,8 @@ def _enrich_with_gemini(analysis: dict, source_text: str) -> GenAIResult:
             }
         ],
         "generationConfig": {
-            "responseFormat": {
-                "text": {
-                    "mimeType": "application/json",
-                    "schema": _gemini_schema(),
-                }
-            }
+            "responseMimeType": "application/json",
+            "responseSchema": _gemini_schema(),
         },
     }
     thinking_level = os.getenv("GEMINI_THINKING_LEVEL", "low").strip()

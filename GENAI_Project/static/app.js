@@ -95,12 +95,12 @@ function setStatus(msg, type = "ok") {
 
 /* ===== Render ===== */
 function render(result) {
-  const doc = result.documents[0];
+  const doc = result.documents[result.documents.length - 1];
   renderSummary(result, doc);
   renderMetrics(doc);
   renderTone(doc);
   renderRisks(doc);
-  renderBenchmark(result);
+  renderBenchmark(result, doc);
   renderMemo(doc);
 }
 
@@ -259,17 +259,40 @@ function renderRisks(doc) {
         </div>
       `).join("") || '<p class="excerpt">No risk passages extracted.</p>'}
     </div>
+    
+    ${doc.risk_comparison && (doc.risk_comparison.new?.length || doc.risk_comparison.escalated?.length) ? `
+      <div class="card" style="margin-top:20px">
+        <div class="card-header"><h2>\u26A0\uFE0F Risk Comparison vs Prior Period</h2></div>
+        <div class="stack" style="margin-top:12px">
+          ${doc.risk_comparison.new?.map(r => `
+            <div class="comparison-row">
+              <span class="pill red">NEW</span>
+              <strong>${esc(r.title)}</strong>
+              <span class="excerpt">${esc(r.excerpt)}</span>
+            </div>
+          `).join("") || ""}
+          ${doc.risk_comparison.escalated?.map(r => `
+            <div class="comparison-row">
+              <span class="pill amber">ESCALATED</span>
+              <strong>${esc(r.title)}</strong>
+              <span class="excerpt">${esc(r.excerpt)}</span>
+            </div>
+          `).join("") || ""}
+        </div>
+      </div>
+    ` : ""}
   `;
 }
 
 /* ===== Benchmark ===== */
-function renderBenchmark(result) {
+function renderBenchmark(result, doc) {
   const bm = result.benchmark || [];
   const docs = result.documents || [];
 
+  let html = "";
+
   if (!bm.length && docs.length <= 1) {
     // Single document — generate self-benchmark from metrics
-    const doc = docs[0];
     if (!doc) {
       document.querySelector("#benchmark").innerHTML = `
         <h1 class="section-title">Competitor Benchmarking</h1>
@@ -329,13 +352,11 @@ function renderBenchmark(result) {
         </div>
       ` : ""}
     `;
-    return;
-  }
-
-  // Multi-company benchmark
-  document.querySelector("#benchmark").innerHTML = `
-    <h1 class="section-title">Competitor Benchmarking</h1>
-    <p class="section-subtitle">Comparative analysis across ${bm.length} companies on key metrics, margins, and capital allocation</p>
+  } else {
+    // Multi-company benchmark
+    html += `
+      <h1 class="section-title">Competitor Benchmarking</h1>
+      <p class="section-subtitle">Comparative analysis across ${bm.length} companies on key metrics, margins, and capital allocation</p>
 
     <!-- Summary comparison table -->
     <div class="card">
@@ -393,6 +414,33 @@ function renderBenchmark(result) {
       `).join("")}
     </div>
   `;
+  }
+
+  // Always append period comparison at the bottom if available (for both single and multi-file scenarios)
+  if (doc?.metric_comparison?.length) {
+    html += `
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><h2>Period Comparison (Latest vs Prior)</h2></div>
+        <div class="comparison-table">
+        <table>
+          <thead><tr><th>Metric</th><th>Current</th><th>Prior</th><th>Change</th></tr></thead>
+          <tbody>
+            ${doc.metric_comparison.filter((r) => r.change_pct !== null).map((r) => `
+              <tr>
+                <td><strong>${esc(r.metric)}</strong></td>
+                <td>${fmtVal(r.current, "USD")}</td>
+                <td>${fmtVal(r.prior, "USD")}</td>
+                <td style="color:${r.change_pct >= 0 ? "var(--green)" : "var(--red)"};font-weight:700">${r.change_pct >= 0 ? "+" : ""}${r.change_pct.toFixed(1)}%</td>
+              </tr>
+            `).join("") || '<tr><td colspan="4" class="excerpt">No comparison data</td></tr>'}
+          </tbody>
+        </table>
+        </div>
+      </div>
+    `;
+  }
+  
+  document.querySelector("#benchmark").innerHTML = html;
 }
 
 /* ===== Memo ===== */
