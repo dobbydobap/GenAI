@@ -93,4 +93,5 @@ The PDF extraction pipeline tries three methods in order:
 2. **pdftotext** (install `poppler-utils`) — good layout-preserving fallback.
 3. **Internal Flate stream decoder** — zero-dependency last resort for Chromium/Skia PDFs.
 
-Without PyMuPDF, only the sample Chromium/Skia PDF and plain-text/HTML filings are reliably supported. Scanned PDFs should be OCRed before ingestion regardless of extractor.
+Without PyMuPDF, only the sample Chromium/Skia PDF and plain-text/HTML filings are reliably supported. 
+Scanned PDFs should be OCRed before ingestion regardless of extractor.
