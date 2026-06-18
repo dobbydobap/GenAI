@@ -306,9 +306,9 @@ function renderBenchmark(result, doc) {
     const byName = {};
     metrics.forEach((m) => { if (!byName[m.name]) byName[m.name] = m; });
 
-    document.querySelector("#benchmark").innerHTML = `
+    html += `
       <h1 class="section-title">Company Profile &mdash; ${esc(doc.company)}</h1>
-      <p class="section-subtitle">Key financial metrics at a glance. Upload multiple filings to compare companies.</p>
+      <p class="section-subtitle">Key financial metrics at a glance. Upload multiple filings to compare companies side-by-side.</p>
 
       <div class="benchmark-grid">
         <div class="benchmark-company-card">
@@ -330,27 +330,6 @@ function renderBenchmark(result, doc) {
           </div>
         </div>
       </div>
-
-      ${doc.metric_comparison?.length ? `
-        <div class="card" style="margin-top:16px">
-          <div class="card-header"><h2>Period Comparison</h2></div>
-          <div class="comparison-table">
-          <table>
-            <thead><tr><th>Metric</th><th>Current</th><th>Prior</th><th>Change</th></tr></thead>
-            <tbody>
-              ${doc.metric_comparison.filter((r) => r.change_pct !== null).map((r) => `
-                <tr>
-                  <td><strong>${esc(r.metric)}</strong></td>
-                  <td>${fmtVal(r.current, "USD")}</td>
-                  <td>${fmtVal(r.prior, "USD")}</td>
-                  <td style="color:${r.change_pct >= 0 ? "var(--green)" : "var(--red)"};font-weight:700">${r.change_pct >= 0 ? "+" : ""}${r.change_pct.toFixed(1)}%</td>
-                </tr>
-              `).join("") || '<tr><td colspan="4" class="excerpt">No comparison data</td></tr>'}
-            </tbody>
-          </table>
-          </div>
-        </div>
-      ` : ""}
     `;
   } else {
     // Multi-company benchmark
