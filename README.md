@@ -33,7 +33,7 @@ python3 -m finanalyst.server 8000
 If both keys are present, Gemini is used by default. Override with:
 
 ```bash
-export AI_PROVIDER="gemini"  # or "openai"
+ export AI_PROVIDER="gemini"  # or "openai"
 ```
 
 With a model API key, the pipeline is:
